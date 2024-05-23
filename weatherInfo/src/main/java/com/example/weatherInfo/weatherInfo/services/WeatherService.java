@@ -1,10 +1,10 @@
 package com.example.weatherInfo.weatherInfo.services;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Optional;
-import org.json.JSONArray;
-import org.json.JSONObject;
 
+import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -32,20 +32,17 @@ public class WeatherService {
     }
 
     public WeatherEntity getWeather(String pincode, LocalDate forDate) {
-        // Check if weather info already exists in DB
         Optional<WeatherEntity> optionalWeatherInfo = weatherInfoRepository.findByPincodeAndForDate(pincode, forDate);
         if (optionalWeatherInfo.isPresent()) {
             return optionalWeatherInfo.get();
         }
 
-        // Get lat/long for the pincode
         PincodeEntity pincodeInfo = pincodeInfoRepository.findById(pincode).orElseGet(() -> {
         	PincodeEntity newInfo = getPincodeInfoFromApi(pincode);
             pincodeInfoRepository.save(newInfo);
             return newInfo;
         });
 
-        // Get weather data
         WeatherEntity weatherInfo = getWeatherFromApi(pincode, pincodeInfo.getLatitude(), pincodeInfo.getLongitude(), forDate);
         weatherInfoRepository.save(weatherInfo);
 
@@ -53,10 +50,9 @@ public class WeatherService {
     }
 
     private PincodeEntity getPincodeInfoFromApi(String pincode) {
-        // Use geocoding API to get lat/long for the pincode
-        String url = String.format("https://api.openweathermap.org/geo/1.0/zip?zip=%s,IN&appid=%s", pincode, apiKey);
+    	
+        String url = "https://api.openweathermap.org/geo/1.0/zip?zip=" + pincode + ",in&appid=" + apiKey;
         ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-        // Parse response to get latitude and longitude
         JSONObject jsonObject = new JSONObject(response.getBody());
         Double latitude = jsonObject.getDouble("lat");
         Double longitude = jsonObject.getDouble("lon");
@@ -69,26 +65,23 @@ public class WeatherService {
     }
 
     private WeatherEntity getWeatherFromApi(String pincode, Double latitude, Double longitude, LocalDate forDate) {
-        // Use OpenWeather API to get weather data
-        String url = String.format("https://api.openweathermap.org/data/2.5/onecall?lat=%f&lon=%f&exclude=hourly,minutely,current,alerts&appid=%s", latitude, longitude, apiKey);
+    	
+    	long unixTimestamp = forDate.atStartOfDay(ZoneOffset.UTC).toEpochSecond();
+        String url = "https://api.openweathermap.org/data/2.5/weather?lat=" + latitude + "&lon=" + longitude + "&appid="
+                + apiKey + "&dt=" + unixTimestamp;
         ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-        // Parse response to get weather data for the specific date
-        JSONObject jsonObject = new JSONObject(response.getBody());
-        JSONArray dailyArray = jsonObject.getJSONArray("daily");
-        String weatherData = null;
-        for (int i = 0; i < dailyArray.length(); i++) {
-            JSONObject daily = dailyArray.getJSONObject(i);
-            LocalDate date = LocalDate.ofEpochDay(daily.getLong("dt")/86400);
-            if (date.equals(forDate)) {
-                weatherData = daily.toString();
-                break;
-            }
-        }
+
+        JSONObject weatherData = new JSONObject(response.getBody());
 
         WeatherEntity weatherInfo = new WeatherEntity();
         weatherInfo.setPincode(pincode);
         weatherInfo.setForDate(forDate);
-        weatherInfo.setWeatherData(weatherData);
+        weatherInfo.setTemperature(weatherData.getJSONObject("main").getDouble("temp"));
+        weatherInfo.setHumidity(weatherData.getJSONObject("main").getInt("humidity"));
+        weatherInfo.setPressure(weatherData.getJSONObject("main").getInt("pressure"));
+        weatherInfo.setWindSpeed(weatherData.getJSONObject("wind").getInt("speed"));
+        weatherInfo.setDescription(weatherData.getJSONArray("weather").getJSONObject(0).getString("description"));
+        weatherInfo.setPlace(weatherData.getString("name"));
         return weatherInfo;
     }
 }
